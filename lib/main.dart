@@ -1,73 +1,51 @@
 import 'package:flutter/material.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'services/notification_service.dart';
+import 'screens/timer_screen.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Timezone setup for scheduled notifications
+  try {
+    tz_data.initializeTimeZones();
+    final String tzName = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(tzName));
+  } catch (_) {
+    // Fall back to UTC if timezone detection fails
+    tz.setLocalLocation(tz.getLocation('UTC'));
+  }
+
+  // Notification plugin setup
+  try {
+    const initSettings = InitializationSettings(
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+    );
+    await notificationPlugin.initialize(initSettings);
+  } catch (_) {
+    // Notifications unavailable — timer will still work without them
+  }
+
+  runApp(const TimerApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TimerApp extends StatelessWidget {
+  const TimerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Healthmaxx',
-      theme: ThemeData(
-
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Healthmaxx'),
-    );
-  }
-}
-
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-
-    return Scaffold(
-      appBar: AppBar(
-
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-
-        title: Text(widget.title),
-      ),
-      body: Center(
-
-        child: Column(
-
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('Basic function:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), 
+      title: 'Little Blue Truck Timer',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(scaffoldBackgroundColor: Colors.white),
+      home: const TimerScreen(),
     );
   }
 }

@@ -39,7 +39,6 @@ class _TimerScreenState extends State<TimerScreen>
   List<QuickTime> _quickTimes = List.from(QuickTime.defaults);
 
   // First / Then
-  bool _firstThenMode = false;
   Activity? _firstActivity;
   Activity? _thenActivity;
 
@@ -303,10 +302,6 @@ class _TimerScreenState extends State<TimerScreen>
     await NotificationService.requestPermissions();
   }
 
-  void _toggleFirstThen() {
-    setState(() => _firstThenMode = !_firstThenMode);
-  }
-
   void _setFirstActivity(Activity a) {
     setState(() => _firstActivity = a);
   }
@@ -351,10 +346,8 @@ class _TimerScreenState extends State<TimerScreen>
               onStartPressed: _startTimer,
               onQuickTimerSelected: _selectQuickTimer,
               onQuickTimerLongPress: _editQuickTimer,
-              firstThenMode: _firstThenMode,
               firstActivity: _firstActivity,
               thenActivity: _thenActivity,
-              onFirstThenToggle: _toggleFirstThen,
               onFirstActivitySelected: _setFirstActivity,
               onThenActivitySelected: _setThenActivity,
               settings: _settings,
@@ -385,6 +378,7 @@ class _TimerScreenState extends State<TimerScreen>
               },
               firstActivity: _firstActivity,
               thenActivity: _thenActivity,
+              settings: _settings,
             ),
     );
   }

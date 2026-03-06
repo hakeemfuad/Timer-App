@@ -184,7 +184,7 @@ class _FirstThenOverlayState extends State<FirstThenOverlay> {
                   child: Image.asset(
                     _focusedActivity!.imagePath,
                     width: double.infinity,
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                     alignment: const Alignment(0, -0.4), // Move image up
                   ),
                 ),
@@ -298,7 +298,7 @@ class _ActivityPanel extends StatelessWidget {
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(33)),
                       child: Image.asset(
                         activity!.imagePath,
-                        fit: BoxFit.cover,
+                        fit: BoxFit.contain,
                         alignment: const Alignment(0, -0.3), // Move up
                       ),
                     ),

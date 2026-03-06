@@ -1,9 +1,11 @@
+import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import '../models/activity.dart';
-import '../widgets/clock_badge_painter.dart';
-import '../widgets/action_button.dart';
-import '../widgets/first_then_overlay.dart';
+import '../models/app_settings.dart';
+import '../widgets/scene_background.dart';
 
 class StartedView extends StatefulWidget {
   final bool isRunning;
@@ -17,6 +19,7 @@ class StartedView extends StatefulWidget {
   final VoidCallback onRemoveMinute;
   final Activity? firstActivity;
   final Activity? thenActivity;
+  final AppSettings settings;
 
   const StartedView({
     super.key,
@@ -31,14 +34,62 @@ class StartedView extends StatefulWidget {
     required this.onRemoveMinute,
     this.firstActivity,
     this.thenActivity,
+    required this.settings,
   });
 
   @override
   State<StartedView> createState() => _StartedViewState();
 }
 
-class _StartedViewState extends State<StartedView> {
-  bool _showSettings = false;
+class _StartedViewState extends State<StartedView>
+    with SingleTickerProviderStateMixin {
+  bool _showFirstThen = false;
+
+  // Smooth ring animation — tweens between 1-second progress steps
+  late AnimationController _ringCtrl;
+  late Animation<double> _ringAnim;
+
+  bool get _isSkyBlue =>
+      widget.settings.backgroundTheme == BackgroundTheme.skyBlue;
+
+  bool get _hasActivities =>
+      widget.firstActivity != null || widget.thenActivity != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _ringCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    _ringAnim = Tween<double>(
+      begin: widget.progress,
+      end: widget.progress,
+    ).animate(_ringCtrl);
+  }
+
+  @override
+  void didUpdateWidget(StartedView old) {
+    super.didUpdateWidget(old);
+    if (old.progress != widget.progress) {
+      // Animate from wherever the ring currently is to the new target
+      _ringAnim = Tween<double>(
+        begin: _ringAnim.value,
+        end: widget.progress,
+      ).animate(CurvedAnimation(parent: _ringCtrl, curve: Curves.linear));
+      _ringCtrl.forward(from: 0);
+    }
+    // Pause animation when timer is paused
+    if (!widget.isRunning && _ringCtrl.isAnimating) {
+      _ringCtrl.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ringCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,248 +99,367 @@ class _StartedViewState extends State<StartedView> {
         '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            setState(() {
-              _showSettings = !_showSettings;
-            });
-          },
-          child: Stack(
-            children: [
-              Column(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ── Background (same as NotStartedView) ────────────────
+          SceneBackground(
+            isSkyBlue: _isSkyBlue,
+            cloudSpeedMultiplier: widget.settings.cloudSpeedMultiplier,
+          ),
+
+          // ── Main content ───────────────────────────────────────
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              if (_hasActivities) {
+                HapticFeedback.lightImpact();
+                setState(() => _showFirstThen = true);
+              }
+            },
+            child: SafeArea(
+              child: Column(
                 children: [
                   const Spacer(),
 
-                  // Circle video + clock badge
-                  Center(
-                    child: SizedBox(
-                      width: 440,
-                      height: 440,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          // Main circular video frame
-                          Container(
-                            width: 420,
-                            height: 420,
-                            margin: const EdgeInsets.only(left: 10, top: 10),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: const Color(0xFF5DAA60),
-                              border: Border.all(
-                                  color: const Color(0xFF2A2A2A), width: 6),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.15),
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            clipBehavior: Clip.hardEdge,
-                            child: widget.videoReady && widget.videoController != null
-                                ? FittedBox(
-                                    fit: BoxFit.cover,
-                                    child: SizedBox(
-                                      width: widget.videoController!.value.size.width,
-                                      height: widget.videoController!.value.size.height,
-                                      child: VideoPlayer(widget.videoController!),
-                                    ),
-                                  )
-                                : const Center(
-                                    child: CircularProgressIndicator(
-                                        color: Colors.white)),
-                          ),
-                          // High-contrast 'Live' clock badge
-                          Positioned(
-                            right: 0,
-                            bottom: 10,
-                            child: Container(
-                              width: 140,
-                              height: 140,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: const Color(0xFFE05252),
-                                border: Border.all(
-                                    color: Colors.black.withOpacity(0.8), width: 4),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.25),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 6),
-                                  ),
-                                ],
-                              ),
-                              child: CustomPaint(
-                                painter: ClockBadgePainter(progress: widget.progress),
-                              ),
-                            ),
+                  // Liquid glass timer inside progress ring
+                  _buildTimerCenter(timeStr),
+
+                  const SizedBox(height: 36),
+
+                  // Controls row: [Cancel]   [Pause/Resume]
+                  _buildControlsRow(),
+
+                  const Spacer(flex: 2),
+                ],
+              ),
+            ),
+          ),
+
+          // ── FirstThen full-screen overlay ──────────────────────
+          if (_showFirstThen) _buildFirstThenOverlay(),
+        ],
+      ),
+    );
+  }
+
+  // ── Liquid glass timer inside progress ring ────────────────────────
+  Widget _buildTimerCenter(String timeStr) {
+    return Center(
+      child: SizedBox(
+        width: 400,
+        height: 400,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Progress ring — driven by smooth animation, not raw seconds
+            AnimatedBuilder(
+              animation: _ringAnim,
+              builder: (_, __) => CustomPaint(
+                size: const Size(400, 400),
+                painter: _VideoRingPainter(progress: _ringAnim.value),
+              ),
+            ),
+
+            // Liquid glass circle — sized to exactly fill the ring's inner edge
+            // Ring: 400px container, 14px stroke → inner diameter = (200-7)*2 - 14 = 372px
+            ClipOval(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  width: 372,
+                  height: 372,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      center: const Alignment(-0.3, -0.4),
+                      radius: 1.0,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.16),
+                        Colors.white.withValues(alpha: 0.06),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.30),
+                      width: 1.0,
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      timeStr,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 96,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -3,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
                           ),
                         ],
                       ),
                     ),
                   ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-                  const SizedBox(height: 32),
+  // ── Controls row: [Cancel]   [Pause/Resume] ────────────────────────
+  Widget _buildControlsRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Cancel button
+        GestureDetector(
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            widget.onStopTap();
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+            decoration: BoxDecoration(
+              color: kCoral,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: kCoral.withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: const Text(
+              'CANCEL',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+        ),
 
-                  // Bold Typography for Timer
-                  Text(
-                    timeStr,
-                    style: const TextStyle(
-                      color: Color(0xFF1A1A1A),
-                      fontSize: 110,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -2,
-                      fontFamily: 'SF Pro Display', // Apple style if available
+        const SizedBox(width: 32),
+
+        // Pause / Resume button
+        GestureDetector(
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            widget.onPlayPauseTap();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+            decoration: BoxDecoration(
+              color: widget.isRunning ? kAmber : kSage,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: (widget.isRunning ? kAmber : kSage)
+                      .withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Text(
+              widget.isRunning ? 'PAUSE' : 'RESUME',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── FirstThen full-screen overlay ──────────────────────────────────
+  Widget _buildFirstThenOverlay() {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final cardHeight = screenHeight * 0.6;
+
+    return GestureDetector(
+      onTap: () => setState(() => _showFirstThen = false),
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.88),
+        child: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _buildFullScreenCard(
+                      'FIRST',
+                      widget.firstActivity,
+                      kCoral,
+                      cardHeight,
                     ),
                   ),
-
-                  const Spacer(flex: 2),
+                  const SizedBox(width: 32),
+                  Expanded(
+                    child: _buildFullScreenCard(
+                      'THEN',
+                      widget.thenActivity,
+                      kDustyBlue,
+                      cardHeight,
+                    ),
+                  ),
                 ],
               ),
-
-              // Settings/Controls Overlay
-              if (_showSettings)
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.white.withOpacity(0.8),
-                    child: Column(
-                      children: [
-                        // Header row
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 22, 0),
-                          child: Row(
-                            children: [
-                              if (widget.firstActivity != null || widget.thenActivity != null)
-                                GestureDetector(
-                                  onTap: () {
-                                    setState(() => _showSettings = false);
-                                    FirstThenOverlay.show(
-                                      context,
-                                      firstActivity: widget.firstActivity,
-                                      thenActivity: widget.thenActivity,
-                                    );
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 20, vertical: 12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF0F8FF),
-                                      borderRadius: BorderRadius.circular(30),
-                                      border: Border.all(
-                                          color: const Color(0xFF5B9FE8).withOpacity(0.4),
-                                          width: 2.0),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Text(
-                                          'Schedule',
-                                          style: TextStyle(
-                                            color: Color(0xFF5B9FE8),
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Icon(Icons.arrow_forward_rounded,
-                                            size: 18, color: Color(0xFF5B9FE8)),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              const Spacer(),
-                              Icon(Icons.music_note,
-                                  color: Colors.amber[600], size: 36),
-                              const SizedBox(width: 20),
-                              Icon(Icons.notifications,
-                                  color: Colors.amber[600], size: 36),
-                            ],
-                          ),
-                        ),
-                        const Spacer(),
-
-                        // Adjustments
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            AdjustmentButton(
-                              icon: Icons.add,
-                              onTap: widget.onAddMinute,
-                            ),
-                            const SizedBox(width: 40),
-                            AdjustmentButton(
-                              icon: Icons.remove,
-                              onTap: widget.onRemoveMinute,
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 40),
-
-                        // Play / Stop buttons
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            ActionButton(
-                              color: const Color(0xFF4ECBA3),
-                              icon: widget.isRunning ? Icons.pause : Icons.play_arrow,
-                              onTap: widget.onPlayPauseTap,
-                            ),
-                            const SizedBox(width: 24),
-                            ActionButton(
-                              color: const Color(0xFF66CCDD),
-                              icon: Icons.stop,
-                              onTap: widget.onStopTap,
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 60),
-                        const Text(
-                          "Tap anywhere to hide controls",
-                          style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 40),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
-}
 
-class AdjustmentButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const AdjustmentButton({
-    super.key,
-    required this.icon,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          shape: BoxShape.circle,
-          border: Border.all(color: const Color(0xFFDDDDDD), width: 2),
+  Widget _buildFullScreenCard(
+    String label,
+    Activity? activity,
+    Color color,
+    double height,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Title above card
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 36,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 4,
+          ),
         ),
-        child: Icon(icon, color: const Color(0xFF333333), size: 32),
-      ),
+        const SizedBox(height: 16),
+        // Card
+        Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(40),
+            border: Border.all(color: color.withValues(alpha: 0.4), width: 3),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.30),
+                blurRadius: 50,
+                offset: const Offset(0, 20),
+              ),
+            ],
+          ),
+          child: activity != null
+              ? Column(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(37),
+                        ),
+                        child: Image.asset(
+                          activity.imagePath,
+                          width: double.infinity,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Text(
+                        activity.label.toUpperCase(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          color: kEspresso,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.help_outline_rounded,
+                        color: color.withValues(alpha: 0.20),
+                        size: 80,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Not set',
+                        style: TextStyle(
+                          color: color.withValues(alpha: 0.40),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
     );
   }
+}
+
+// ── Video ring painter: orange depleting counterclockwise ────────────
+class _VideoRingPainter extends CustomPainter {
+  final double progress; // 1.0 = full time remaining, 0.0 = empty
+
+  _VideoRingPainter({required this.progress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2;
+    const strokeWidth = 14.0;
+    final drawRadius = radius - strokeWidth / 2;
+
+    // Gray background ring (revealed as orange depletes)
+    final grayPaint = Paint()
+      ..color = const Color(0xFFCCCCCC)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, drawRadius, grayPaint);
+
+    // Orange progress arc (counterclockwise from 12 o'clock)
+    if (progress > 0.005) {
+      final orangePaint = Paint()
+        ..color = kAmber
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round;
+
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: drawRadius),
+        -pi / 2, // start at 12 o'clock
+        -2 * pi * progress, // counterclockwise
+        false,
+        orangePaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_VideoRingPainter old) => old.progress != progress;
 }

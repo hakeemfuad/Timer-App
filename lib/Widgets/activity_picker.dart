@@ -170,7 +170,7 @@ class _ActivityCell extends StatelessWidget {
                     const BorderRadius.vertical(top: Radius.circular(14.5)),
                 child: Image.asset(
                   activity.imagePath,
-                  fit: BoxFit.cover,
+                  fit: BoxFit.contain,
                   width: double.infinity,
                 ),
               ),
